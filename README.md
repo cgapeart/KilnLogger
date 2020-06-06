@@ -22,7 +22,8 @@ This is just a toy for creating a live graph of the temperature of a backyard ra
 * Solder the connections and keep them short.  Attach the thermocouple.
 * Make sure to use the ESP8266 sketch data upload plugin to copy the files from data folder into the SPIFFS filesystem on the ESP8266
 
-## #include <stddisclaimer.h>
+## Safety Warning
+* Released under [The MIT License](https://github.com/cgapeart/KilnLogger/blob/master/LICENSE)
 * No safety or reliability testing has been completed.
 * No safety certifications have been sought or received
 * The author(s) accept no liability for use.
