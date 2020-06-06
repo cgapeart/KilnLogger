@@ -1,3 +1,31 @@
+
+#include "Adafruit_MAX31856.h"
+//-----------------------------------------
+//LOCAL SETTINGS - update in this block for your needs
+
+#define STASSID "WIFI SSID"
+#define STAPSK  "WIFI PASSWD"
+#define STANAME "HOSTNAME"
+#define TIME_ZONE "MDT-6"
+#define NTP_SERVER "0.ca.pool.ntp.org"
+#define THERMOCOUPLE_TYPE MAX31856_TCTYPE_J
+
+//Pin mappings max31865 breakout pin = ESP8266 pin
+const uint8_t xCS = D3;
+const uint8_t xSDI = D2;
+const uint8_t xSDO = D1;
+const uint8_t xSCK = D0;
+const uint8_t xFLT = D5;
+const uint8_t xDRD = D6;
+
+//END LOCAL SETTINGS
+//-----------------------------------------
+
+
+const char *ssid = STASSID;
+const char *password = STAPSK;
+const char *mdnsName = STANAME;
+
 #include <ESPPerfectTime.h>
 #include <sntp.h>
 #include <LittleFS.h>
@@ -7,23 +35,6 @@
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
 
-#include "Adafruit_MAX31856.h"
-
-#ifndef STASSID
-#define STASSID "YOUR_WIFI_SSID"
-#define STAPSK  "YOUR_WIFI_PASSWORD"
-#define STANAME "mDNS_Name_to_broadcast"
-#endif
-
-const uint8_t xCS = D3;
-const uint8_t xSDI = D2;
-const uint8_t xSDO = D1;
-const uint8_t xSCK = D0;
-const uint8_t xFLT = D5;
-const uint8_t xDRD = D6;
-const char *ssid = STASSID;
-const char *password = STAPSK;
-const char *mdnsName = STANAME;
 
 struct sample_t
 {
@@ -55,14 +66,16 @@ void handleRoot() {
   snprintf(temp, RESP_BUFFER_LEN,
             "<html>\n"
               "<head>\n"
-                //"<meta http-equiv='refresh'>\n"
-                "<title>Internet Of Kilns</title>\n"
+                "<meta http-equiv=\"refresh\" content=\"20\">\n"
+                "<title>Internet Of Kilns - " STANAME "</title>\n"
                 "<link rel=\"stylesheet\" href=\"/chartist.min.css\">\n"
+                "<link rel=\"shortcut icon\" href=\"/favicon.ico\">\n"
                 "<style>\n"
                   "body { background-color: #cccccc; font-family: Arial, Helvetica, Sans-Serif; Color: #000088; }\n"
                 "</style>\n"
               "</head>\n"
               "<body>\n"
+                "<H1>" STANAME "</h1>\n"
                 "<p>Uptime: %02d:%02d:%02d</p>\n"
                 "<p>Date and time: %04d-%02d-%02d %02d:%02d:%02d</p>\n"
                 "<p>Outside Temp:%f degrees C</p>\n"
@@ -73,7 +86,7 @@ void handleRoot() {
                 "<script>\n"
                   "new Chartist.Line('.ct-chart', data);\n"
                 "</script>\n"
-                "OK\n"
+                "<a href=\"/data.json\">Raw data in .json format</a>\n"
               "</body>\n"
             "</html>\n",
            hr, min % 60, sec % 60,
@@ -81,7 +94,6 @@ void handleRoot() {
            localTime->tm_hour, localTime->tm_min, localTime->tm_sec,
            buffer[current].outsideTemp,buffer[current].insideTemp);
 
-  //server.sendHeader("Cache-Control", "max-age=3600", true);
   server.sendHeader("Cache-Control", "no-cache", true);
   server.send(200, "text/html", temp);
   
@@ -123,7 +135,6 @@ bool handleFileRead(String path)
 {
   if(SPIFFS.exists(path))
   {
-    server.sendHeader("Cache-Control", "max-age=3600", true);
     String contentType = getContentType(path);
     File file = SPIFFS.open(path, "r");
     size_t bytes = server.streamFile(file, contentType, HTTP_GET);
@@ -162,18 +173,14 @@ void setup(void) {
   if(tempSensor.begin())
   {
     Serial.println("temp sensor started");
-    tempSensor.setThermocoupleType(MAX31856_TCTYPE_J);
-    if(tempSensor.getThermocoupleType() != MAX31856_TCTYPE_J)
+    tempSensor.setThermocoupleType(THERMOCOUPLE_TYPE);
+    if(tempSensor.getThermocoupleType() != THERMOCOUPLE_TYPE)
     {
-      Serial.println("**NOREADBACK**");
+      Serial.println("SPI connection to MAX31856 is not working.  No point continuing.");
       while(1);
     }
-    else
-    {
-        Serial.println(tempSensor.getThermocoupleType() == MAX31856_TCTYPE_J);
-    }
 
-    tempSensor.setTempFaultThreshholds(-50.0, 4000.0);
+    tempSensor.setTempFaultThreshholds(-50.0, 2500.0);
     tempSensor.setColdJunctionFaultThreshholds(-10,40);
     tempSensor.setNoiseFilter(MAX31856_NOISE_FILTER_60HZ);
     sampleData();
@@ -189,7 +196,7 @@ void setup(void) {
     Serial.println("MDNS responder started");
   }
 
-  pftime::configTime("MDT-6", "0.ca.pool.ntp.org");
+  pftime::configTime(TIME_ZONE, NTP_SERVER);
 
   server.on("/", handleRoot);
   server.on("/data.json", handleDataJson);
@@ -254,9 +261,17 @@ void handleData(bool isJs)
 
   for(int i = 0 ; i < BUF_LEN; ++i)
   {
-    struct tm *tm = localtime(&buffer[(i+startFrom)% BUF_LEN].time);
-    pos += snprintf(&temp[pos], RESP_BUFFER_LEN-pos, "%02h:%02m:02s,", 
-    tm->tm_hour, tm->tm_min, tm->tm_sec );
+
+    if(buffer[(i+startFrom)% BUF_LEN].time == 0)
+    {
+      pos += snprintf(&temp[pos], RESP_BUFFER_LEN-pos, "\"\",");
+    }
+    else
+    {
+      struct tm *tm = localtime(&buffer[(i+startFrom)% BUF_LEN].time);
+        pos += snprintf(&temp[pos], RESP_BUFFER_LEN-pos, "\"%02d:%02d:%02d\",", 
+        tm->tm_hour, tm->tm_min, tm->tm_sec );
+    }
   }
   pos += snprintf(&temp[pos], RESP_BUFFER_LEN-pos, "], series: [[");
 
