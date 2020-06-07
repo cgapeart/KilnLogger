@@ -1,14 +1,16 @@
 
 #include "Adafruit_MAX31856.h"
+#include <memory>
 //-----------------------------------------
 //LOCAL SETTINGS - update in this block for your needs
 
-#define STASSID "WIFI SSID"
-#define STAPSK  "WIFI PASSWD"
-#define STANAME "HOSTNAME"
+#define STASSID "Wifi SSID"
+#define STAPSK  "Wifi Password"
+#define STANAME "KilnLogger-1"
 #define TIME_ZONE "MDT-6"
 #define NTP_SERVER "0.ca.pool.ntp.org"
 #define THERMOCOUPLE_TYPE MAX31856_TCTYPE_J
+
 
 //Pin mappings max31865 breakout pin = ESP8266 pin
 const uint8_t xCS = D3;
@@ -17,6 +19,15 @@ const uint8_t xSDO = D1;
 const uint8_t xSCK = D0;
 const uint8_t xFLT = D5;
 const uint8_t xDRD = D6;
+
+//How many samples to keep and graph
+#define BUF_LEN 300
+//How often to sample the temperatures
+#define SAMPLE_PERIOD 1000
+//How much heap to set aside to build the .js or .json file to send
+//Must be big enough to hold all the data once converted based on BUF_LEN
+#define RESP_BUFFER_LEN 10000
+
 
 //END LOCAL SETTINGS
 //-----------------------------------------
@@ -42,65 +53,78 @@ struct sample_t
   float outsideTemp;
   float insideTemp;
 };
-#define BUF_LEN 20
 volatile int current = 0;
 sample_t buffer[BUF_LEN] = {0};
-#define SAMPLE_PERIOD 10000
 
-#define RESP_BUFFER_LEN 24000
 
 ESP8266WebServer server(80);
 
-Adafruit_MAX31856 tempSensor(xCS,xSDI,xSDO,xSCK);
+Adafruit_MAX31856 tempSensor(xCS, xSDI, xSDO, xSCK);
+
+static const char PROGMEM rootPage[] = "<html>\n"
+                                       "<head>\n"
+                                       "<meta http-equiv=\"refresh\" content=\"30\">\n"
+                                       "<title>Internet Of Kilns - " STANAME "</title>\n"
+                                       "<link rel=\"stylesheet\" href=\"/chartist.min.css\">\n"
+                                       "<link rel=\"shortcut icon\" href=\"/favicon.ico\">\n"
+                                       "<style>\n"
+                                       "body { background-color: #cccccc; font-family: Arial, Helvetica, Sans-Serif; Color: #000088; }\n"
+                                       "</style>\n"
+                                       "</head>\n"
+                                       "<body>\n"
+                                       "<H1>" STANAME "</h1>\n"
+                                       "<p>Uptime: %02d:%02d:%02d</p>\n"
+                                       "<p>Date and time: %04d-%02d-%02d %02d:%02d:%02d</p>\n"
+                                       "<p>Outside Temp:%f degrees C</p>\n"
+                                       "<p>Measured Temp:%f degrees C</p>\n"
+                                       "<div class=\"ct-chart ct-perfect-fourth\"></div>\n"
+                                       "<script src=\"/chartist.min.js\"></script>\n"
+                                       "<script src=\"/data.js\"/></script>\n"
+                                       "<script src=\"/moment.min.js\"></script>\n"
+                                       "<script>\n"
+                                       "new Chartist.Line('.ct-chart', data \n"
+                                       "  ,{ axisX: \n"
+                                       "     { \n"
+                                       //"       type: Chartist.AutoScaleAxis, \n"
+                                       "       divisor: 10, \n"
+                                       "       labelInterpolationFnc: \n"
+                                       "         function(value) \n"
+                                       "          { \n"
+                                       "            return moment(value).format('HH:MM:SS');\n"
+                                       "          }\n"
+                                       "     } \n"
+                                       "   } \n"
+                                       ");\n"
+                                       "</script>\n"
+                                       "<a href=\"/data.json\">Raw data in .json format</a>\n"
+                                       "</body>\n"
+                                       "</html>\n";
+
 
 void handleRoot() {
-  
-  char temp[RESP_BUFFER_LEN];
+
+
   int sec = millis() / 1000;
   int min = sec / 60;
   int hr = min / 60;
 
-  
+  std::unique_ptr<char[]> temp(new char[RESP_BUFFER_LEN]);
+
   struct tm *localTime = pftime::localtime(nullptr);
-  
-  snprintf(temp, RESP_BUFFER_LEN,
-            "<html>\n"
-              "<head>\n"
-                "<meta http-equiv=\"refresh\" content=\"20\">\n"
-                "<title>Internet Of Kilns - " STANAME "</title>\n"
-                "<link rel=\"stylesheet\" href=\"/chartist.min.css\">\n"
-                "<link rel=\"shortcut icon\" href=\"/favicon.ico\">\n"
-                "<style>\n"
-                  "body { background-color: #cccccc; font-family: Arial, Helvetica, Sans-Serif; Color: #000088; }\n"
-                "</style>\n"
-              "</head>\n"
-              "<body>\n"
-                "<H1>" STANAME "</h1>\n"
-                "<p>Uptime: %02d:%02d:%02d</p>\n"
-                "<p>Date and time: %04d-%02d-%02d %02d:%02d:%02d</p>\n"
-                "<p>Outside Temp:%f degrees C</p>\n"
-                "<p>Measured Temp:%f degrees C</p>\n"
-                "<div class=\"ct-chart ct-perfect-fourth\"></div>\n"
-                "<script src=\"/chartist.min.js\"></script>\n"
-                "<script src=\"/data.js\"/></script>\n"
-                "<script>\n"
-                  "new Chartist.Line('.ct-chart', data);\n"
-                "</script>\n"
-                "<a href=\"/data.json\">Raw data in .json format</a>\n"
-              "</body>\n"
-            "</html>\n",
+
+  snprintf(temp.get(), RESP_BUFFER_LEN, rootPage,
            hr, min % 60, sec % 60,
            localTime->tm_year + 1900, localTime->tm_mon + 1, localTime->tm_mday,
            localTime->tm_hour, localTime->tm_min, localTime->tm_sec,
-           buffer[current].outsideTemp,buffer[current].insideTemp);
+           buffer[current].outsideTemp, buffer[current].insideTemp);
 
   server.sendHeader("Cache-Control", "no-cache", true);
-  server.send(200, "text/html", temp);
-  
+  server.send(200, "text/html", temp.get());
+
 }
 
 void handleNotFound() {
-  if(handleFileRead(server.uri()))
+  if (handleFileRead(server.uri()))
   {
     return;
   }
@@ -119,7 +143,7 @@ void handleNotFound() {
   }
 
   server.send(404, "text/plain", message);
-  
+
 }
 
 String getContentType(String filename) { // convert the file extension to the MIME type
@@ -133,7 +157,7 @@ String getContentType(String filename) { // convert the file extension to the MI
 
 bool handleFileRead(String path)
 {
-  if(SPIFFS.exists(path))
+  if (SPIFFS.exists(path))
   {
     String contentType = getContentType(path);
     File file = SPIFFS.open(path, "r");
@@ -141,7 +165,7 @@ bool handleFileRead(String path)
     file.close();
     return true;
   }
-  
+
   return false;
 }
 
@@ -154,7 +178,7 @@ void setup(void) {
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
-  
+
   SPIFFS.begin();
 
   // Wait for connection
@@ -170,27 +194,25 @@ void setup(void) {
   Serial.println(WiFi.localIP());
 
 
-  if(tempSensor.begin())
+  if (tempSensor.begin())
   {
     Serial.println("temp sensor started");
     tempSensor.setThermocoupleType(THERMOCOUPLE_TYPE);
-    if(tempSensor.getThermocoupleType() != THERMOCOUPLE_TYPE)
+    if (tempSensor.getThermocoupleType() != THERMOCOUPLE_TYPE)
     {
       Serial.println("SPI connection to MAX31856 is not working.  No point continuing.");
-      while(1);
+      while (1);
     }
 
-    tempSensor.setTempFaultThreshholds(-50.0, 2500.0);
-    tempSensor.setColdJunctionFaultThreshholds(-10,40);
     tempSensor.setNoiseFilter(MAX31856_NOISE_FILTER_60HZ);
     sampleData();
-     
+
   }
   else
   {
     Serial.println("temp sensor did not start");
   }
-  
+
 
   if (MDNS.begin(STANAME)) {
     Serial.println("MDNS responder started");
@@ -210,14 +232,18 @@ void setup(void) {
 
 void sampleData()
 {
-  current = (current +1) % BUF_LEN;
-  buffer[current].time = pftime::time(nullptr);
-  buffer[current].outsideTemp =tempSensor.readCJTemperature();
-  buffer[current].insideTemp = tempSensor.readThermocoupleTemperature();
-  
-   uint8_t fault = tempSensor.readFault();
-    
-    if (fault) 
+  current = (current + 1) % BUF_LEN;
+  time_t t = pftime::time(nullptr);
+  struct tm * now = pftime::gmtime(&t);
+  if (now->tm_year != 70)
+  {
+    buffer[current].time = t;
+    buffer[current].outsideTemp = tempSensor.readCJTemperature();
+    buffer[current].insideTemp = tempSensor.readThermocoupleTemperature();
+
+    uint8_t fault = tempSensor.readFault();
+
+    if (fault)
     {
       if (fault & MAX31856_FAULT_CJRANGE) Serial.println("Cold Junction Range Fault");
       if (fault & MAX31856_FAULT_TCRANGE) Serial.println("Thermocouple Range Fault");
@@ -226,16 +252,18 @@ void sampleData()
       if (fault & MAX31856_FAULT_TCHIGH)  Serial.println("Thermocouple High Fault");
       if (fault & MAX31856_FAULT_TCLOW)   Serial.println("Thermocouple Low Fault");
       if (fault & MAX31856_FAULT_OVUV)    Serial.println("Over/Under Voltage Fault");
-      if (fault & MAX31856_FAULT_OPEN)    Serial.println("Thermocouple Open Fault"); 
+      if (fault & MAX31856_FAULT_OPEN)    Serial.println("Thermocouple Open Fault");
     }
 
-  
-  Serial.print(buffer[current].outsideTemp);
-  Serial.print(",");
-  Serial.println(buffer[current].insideTemp);
-  
 
-
+    Serial.print(buffer[current].outsideTemp);
+    Serial.print(",");
+    Serial.println(buffer[current].insideTemp);
+  }
+  else
+  {
+    Serial.println("waiting for SNTP update before logging");
+  }
 }
 
 
@@ -252,59 +280,89 @@ void handleDataJs()
 void handleData(bool isJs)
 {
 
-  time_t now = pftime::time(nullptr);
-  char temp[RESP_BUFFER_LEN];
-  int pos = 0;
-  pos = snprintf(temp, RESP_BUFFER_LEN-pos, "%s{labels: [", isJs?"var data=":"");
-    
+  String responseBuffer;
+  responseBuffer.reserve(RESP_BUFFER_LEN);
+
+#define TEMPLEN 64
+  char temp[TEMPLEN] = {0};
+  snprintf(temp, TEMPLEN, "%s{", isJs ? "var data=" : "");
+  responseBuffer += temp;
+
   int startFrom = current + 1;
 
-  for(int i = 0 ; i < BUF_LEN; ++i)
-  {
+  //  for (int i = 0 ; i < BUF_LEN; ++i)
+  //  {
+  //    if (buffer[(i + startFrom) % BUF_LEN].time == 0)
+  //    {
+  //      snprintf(temp, TEMPLEN, "\"\",");
+  //      responseBuffer += temp;
+  //    }
+  //    else
+  //    {
+  //      struct tm *tm = gmtime(&buffer[(i + startFrom) % BUF_LEN].time);
+  //
+  //      snprintf(temp, TEMPLEN, "\"%04d-%02d-%02dT%02d:%02d:%02dZ\",",
+  //               tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+  //               tm->tm_hour, tm->tm_min, tm->tm_sec );
+  //      responseBuffer += temp;
+  //
+  //    }
+  //  }
 
-    if(buffer[(i+startFrom)% BUF_LEN].time == 0)
+  //  snprintf(temp, TEMPLEN, "], series: [[");
+  snprintf(temp, TEMPLEN, "series: [[");
+  responseBuffer += temp;
+  for (int i = 0 ; i < BUF_LEN; ++i)
+  {
+    struct tm *tm = gmtime(&buffer[(i + startFrom) % BUF_LEN].time);
+    if (tm->tm_year != 70)
     {
-      pos += snprintf(&temp[pos], RESP_BUFFER_LEN-pos, "\"\",");
+      snprintf(temp, TEMPLEN, "{x: \"%04d-%02d-%02dT%02d:%02d:%02dZ\", y:%f},",
+               tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+               tm->tm_hour, tm->tm_min, tm->tm_sec, buffer[(i + startFrom) % BUF_LEN].outsideTemp);
+
+      responseBuffer += temp;
     }
-    else
+  }
+
+
+  snprintf(temp, TEMPLEN, "],[");
+  responseBuffer += temp;
+
+  for (int i = 0 ; i < BUF_LEN; ++i)
+  {
+    struct tm *tm = gmtime(&buffer[(i + startFrom) % BUF_LEN].time);
+
+    if (tm->tm_year != 70)
     {
-      struct tm *tm = localtime(&buffer[(i+startFrom)% BUF_LEN].time);
-        pos += snprintf(&temp[pos], RESP_BUFFER_LEN-pos, "\"%02d:%02d:%02d\",", 
-        tm->tm_hour, tm->tm_min, tm->tm_sec );
+      snprintf(temp, TEMPLEN, "{x: \"%04d-%02d-%02dT%02d:%02d:%02dZ\", y:%f},",
+               tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+               tm->tm_hour, tm->tm_min, tm->tm_sec, buffer[(i + startFrom) % BUF_LEN].insideTemp);
+      responseBuffer += temp;
     }
   }
-  pos += snprintf(&temp[pos], RESP_BUFFER_LEN-pos, "], series: [[");
 
-  for(int i = 0 ; i < BUF_LEN; ++i)
-  {
-    pos += snprintf(&temp[pos], RESP_BUFFER_LEN-pos, "%f,", buffer[(i+startFrom) % BUF_LEN].outsideTemp);
-  }
-
-  pos += snprintf(&temp[pos], RESP_BUFFER_LEN-pos, "],[");
-  for(int i = 0 ; i < BUF_LEN; ++i)
-  {
-    pos += snprintf(&temp[pos], RESP_BUFFER_LEN-pos, "%f,", buffer[(i+startFrom) % BUF_LEN].insideTemp);
-  }
-  
-
-  pos += snprintf(&temp[pos], RESP_BUFFER_LEN-pos, "]]}%s", isJs?";":"");
+  snprintf(temp, TEMPLEN, "]]}%s", isJs ? ";" : "");
+  responseBuffer += temp;
 
 
 
   server.sendHeader("Cache-Control", "no-cache", true);
-  server.send(200, isJs?"application/js":"application/json", temp);
+  server.send(200, isJs ? "application/js" : "application/json", responseBuffer);
+
 }
 
-void loop(void) 
+void loop(void)
 {
-  static unsigned long last=0;
+  static unsigned long last = 0;
   MDNS.update();
   server.handleClient();
+
   unsigned long now = millis();
-  if(now - last > SAMPLE_PERIOD)
+  if (now - last > SAMPLE_PERIOD)
   {
     last = now;
     sampleData();
   }
- 
+  ESP.wdtFeed();
 }
