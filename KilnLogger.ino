@@ -4,8 +4,8 @@
 //-----------------------------------------
 //LOCAL SETTINGS - update in this block for your needs
 
-#define STASSID "Wifi SSID"
-#define STAPSK  "Wifi Password"
+#define STASSID "Wi-Fi SSID"
+#define STAPSK  "Wi-Fi Password"
 #define STANAME "KilnLogger-1"
 #define TIME_ZONE "MDT-6"
 #define NTP_SERVER "0.ca.pool.ntp.org"
@@ -21,9 +21,9 @@ const uint8_t xFLT = D5;
 const uint8_t xDRD = D6;
 
 //How many samples to keep and graph
-#define BUF_LEN 300
+#define BUF_LEN 500
 //How often to sample the temperatures
-#define SAMPLE_PERIOD 1000
+#define SAMPLE_PERIOD 2000
 //How much heap to set aside to build the .js or .json file to send
 //Must be big enough to hold all the data once converted based on BUF_LEN
 #define RESP_BUFFER_LEN 10000
@@ -63,9 +63,10 @@ Adafruit_MAX31856 tempSensor(xCS, xSDI, xSDO, xSCK);
 
 static const char PROGMEM rootPage[] = "<html>\n"
                                        "<head>\n"
-                                       "<meta http-equiv=\"refresh\" content=\"30\">\n"
+                                       "<meta http-equiv=\"refresh\" content=\"15\">\n"
                                        "<title>Internet Of Kilns - " STANAME "</title>\n"
                                        "<link rel=\"stylesheet\" href=\"/chartist.min.css\">\n"
+                                       "<link rel=\"stylesheet\" href=\"/legend.css\">\n"
                                        "<link rel=\"shortcut icon\" href=\"/favicon.ico\">\n"
                                        "<style>\n"
                                        "body { background-color: #cccccc; font-family: Arial, Helvetica, Sans-Serif; Color: #000088; }\n"
@@ -77,23 +78,50 @@ static const char PROGMEM rootPage[] = "<html>\n"
                                        "<p>Date and time: %04d-%02d-%02d %02d:%02d:%02d</p>\n"
                                        "<p>Outside Temp:%f degrees C</p>\n"
                                        "<p>Measured Temp:%f degrees C</p>\n"
-                                       "<div class=\"ct-chart ct-perfect-fourth\"></div>\n"
+                                       "<div class=\"ct-chart ct-octave\"></div>\n"
                                        "<script src=\"/chartist.min.js\"></script>\n"
-                                       "<script src=\"/data.js\"/></script>\n"
                                        "<script src=\"/moment.min.js\"></script>\n"
+                                       "<script src=\"/axistitle.min.js\"></script>\n"
+                                       "<script src=\"/legend.js\"></script>\n"
+                                       "<script src=\"/data.js\"/></script>\n"
                                        "<script>\n"
                                        "new Chartist.Line('.ct-chart', data \n"
                                        "  ,{ axisX: \n"
                                        "     { \n"
-                                       //"       type: Chartist.AutoScaleAxis, \n"
-                                       "       divisor: 10, \n"
+                                       "       type: Chartist.AutoScaleAxis, \n"
+                                       "       scaleMinSpace: 60, \n"
                                        "       labelInterpolationFnc: \n"
                                        "         function(value) \n"
                                        "          { \n"
-                                       "            return moment(value).format('HH:MM:SS');\n"
+                                       "            return moment(value).format('HH:mm:ss');\n"
                                        "          }\n"
                                        "     } \n"
-                                       "   } \n"
+                                       "   , axisY: \n"
+                                       "     { \n"
+                                       "        onlyInteger: true \n"
+                                       "     } \n"
+                                       "   , \n"
+                                       "      chartPadding:{ top: 40, right:0, bottom:30, left: 20}, \n"
+                                       "      plugins: [ \n"
+                                       "        Chartist.plugins.ctAxisTitle({\n"
+                                       "          axisX : { \n"
+                                       "                     axisTitle:\"Time\", \n"
+                                       "                     axisClass: \"ct-axis-title\",\n"
+                                       "                     offset :{ x:0, y:50},\n"
+                                       "                     textAnchor: \"middle\"\n"
+                                       "                   },\n"
+                                       "          axisY : {\n"
+                                       "                     axisTitle:\"Temp (deg. C)\", \n"
+                                       "                     axisClass: \"ct-axis-title\",\n"
+                                       "                     offset :{ x:0, y:0},\n"
+                                       "                     flipTitle: false\n"
+                                       "                  }\n"
+                                       "               }\n"
+                                       "          )\n"
+                                       "         ,\n"
+                                       "          Chartist.plugins.legend()\n"
+                                       "         ]\n"
+                                       "      }\n"
                                        ");\n"
                                        "</script>\n"
                                        "<a href=\"/data.json\">Raw data in .json format</a>\n"
@@ -110,7 +138,9 @@ void handleRoot() {
 
   std::unique_ptr<char[]> temp(new char[RESP_BUFFER_LEN]);
 
-  struct tm *localTime = pftime::localtime(nullptr);
+
+  
+  struct tm *localTime = pftime::localtime(&buffer[current].time);
 
   snprintf(temp.get(), RESP_BUFFER_LEN, rootPage,
            hr, min % 60, sec % 60,
@@ -161,6 +191,7 @@ bool handleFileRead(String path)
   {
     String contentType = getContentType(path);
     File file = SPIFFS.open(path, "r");
+    server.sendHeader("Cache-Control", "max-age=7200", true);
     size_t bytes = server.streamFile(file, contentType, HTTP_GET);
     file.close();
     return true;
@@ -285,39 +316,21 @@ void handleData(bool isJs)
 
 #define TEMPLEN 64
   char temp[TEMPLEN] = {0};
-  snprintf(temp, TEMPLEN, "%s{", isJs ? "var data=" : "");
+  snprintf(temp, TEMPLEN, "%s{\n", isJs ? "var data=" : "");
   responseBuffer += temp;
 
   int startFrom = current + 1;
 
-  //  for (int i = 0 ; i < BUF_LEN; ++i)
-  //  {
-  //    if (buffer[(i + startFrom) % BUF_LEN].time == 0)
-  //    {
-  //      snprintf(temp, TEMPLEN, "\"\",");
-  //      responseBuffer += temp;
-  //    }
-  //    else
-  //    {
-  //      struct tm *tm = gmtime(&buffer[(i + startFrom) % BUF_LEN].time);
-  //
-  //      snprintf(temp, TEMPLEN, "\"%04d-%02d-%02dT%02d:%02d:%02dZ\",",
-  //               tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
-  //               tm->tm_hour, tm->tm_min, tm->tm_sec );
-  //      responseBuffer += temp;
-  //
-  //    }
-  //  }
 
   //  snprintf(temp, TEMPLEN, "], series: [[");
-  snprintf(temp, TEMPLEN, "series: [[");
+  snprintf(temp, TEMPLEN, "series: \n[{ name: 'Ambient Temp', data:[\n");
   responseBuffer += temp;
   for (int i = 0 ; i < BUF_LEN; ++i)
   {
     struct tm *tm = gmtime(&buffer[(i + startFrom) % BUF_LEN].time);
     if (tm->tm_year != 70)
     {
-      snprintf(temp, TEMPLEN, "{x: \"%04d-%02d-%02dT%02d:%02d:%02dZ\", y:%f},",
+      snprintf(temp, TEMPLEN, "\t{x: new Date(\"%04d-%02d-%02dT%02d:%02d:%02dZ\"), y:%f},\n",
                tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
                tm->tm_hour, tm->tm_min, tm->tm_sec, buffer[(i + startFrom) % BUF_LEN].outsideTemp);
 
@@ -326,7 +339,7 @@ void handleData(bool isJs)
   }
 
 
-  snprintf(temp, TEMPLEN, "],[");
+  snprintf(temp, TEMPLEN, "]},\n{ name: 'Kiln Temp', data: [\n");
   responseBuffer += temp;
 
   for (int i = 0 ; i < BUF_LEN; ++i)
@@ -335,17 +348,18 @@ void handleData(bool isJs)
 
     if (tm->tm_year != 70)
     {
-      snprintf(temp, TEMPLEN, "{x: \"%04d-%02d-%02dT%02d:%02d:%02dZ\", y:%f},",
+      snprintf(temp, TEMPLEN, "{x: new Date(\"%04d-%02d-%02dT%02d:%02d:%02dZ\"), y:%f},\n",
                tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
                tm->tm_hour, tm->tm_min, tm->tm_sec, buffer[(i + startFrom) % BUF_LEN].insideTemp);
       responseBuffer += temp;
     }
   }
 
-  snprintf(temp, TEMPLEN, "]]}%s", isJs ? ";" : "");
+  snprintf(temp, TEMPLEN, "]\n}\n]\n}%s", isJs ? ";" : "");
   responseBuffer += temp;
 
-
+  Serial.print("Buffer used: ");
+  Serial.println(responseBuffer.length());
 
   server.sendHeader("Cache-Control", "no-cache", true);
   server.send(200, isJs ? "application/js" : "application/json", responseBuffer);

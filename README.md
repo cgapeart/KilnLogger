@@ -15,6 +15,8 @@ This is just a toy for creating a live graph of the temperature of a backyard ra
 ## External Requirements/Licenses included with the package
 * Includes chartist-js: https://gionkunz.github.io/chartist-js/  (MIT License)
 * Includes momentjs: https://momentjs.com/ (MIT License)
+* Includes chartist-plugin-axistitle https://github.com/alexstanbury/chartist-plugin-axistitle (MIT License)
+* Includes chartist-plugin-legend https://github.com/CodeYellowBV/chartist-plugin-legend (Internet Systems Consortion license)
 
 ## TODO's if you want to use this
 * Set your own WIFI SID and passwords STASSID, STAPSK, and STANAME
