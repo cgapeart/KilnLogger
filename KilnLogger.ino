@@ -4,8 +4,8 @@
 //-----------------------------------------
 //LOCAL SETTINGS - update in this block for your needs
 
-#define STASSID "Wi-Fi SSID"
-#define STAPSK  "Wi-Fi Password"
+#define STASSID "Wifi SSID"
+#define STAPSK  "WiFi Password"
 #define STANAME "KilnLogger-1"
 #define TIME_ZONE "MDT-6"
 #define NTP_SERVER "0.ca.pool.ntp.org"
@@ -21,12 +21,12 @@ const uint8_t xFLT = D5;
 const uint8_t xDRD = D6;
 
 //How many samples to keep and graph
-#define BUF_LEN 500
+#define BUF_LEN 300
 //How often to sample the temperatures
-#define SAMPLE_PERIOD 2000
+#define SAMPLE_PERIOD 10000
 //How much heap to set aside to build the .js or .json file to send
 //Must be big enough to hold all the data once converted based on BUF_LEN
-#define RESP_BUFFER_LEN 10000
+#define RESP_BUFFER_LEN 20000
 
 
 //END LOCAL SETTINGS
@@ -63,7 +63,7 @@ Adafruit_MAX31856 tempSensor(xCS, xSDI, xSDO, xSCK);
 
 static const char PROGMEM rootPage[] = "<html>\n"
                                        "<head>\n"
-                                       "<meta http-equiv=\"refresh\" content=\"15\">\n"
+                                       "<meta http-equiv=\"refresh\" content=\"30\">\n"
                                        "<title>Internet Of Kilns - " STANAME "</title>\n"
                                        "<link rel=\"stylesheet\" href=\"/chartist.min.css\">\n"
                                        "<link rel=\"stylesheet\" href=\"/legend.css\">\n"

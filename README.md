@@ -2,6 +2,8 @@
 InternetOfKilns: A simple ESP8266duino based kiln or bbq temperature logger
 This is just a toy for creating a live graph of the temperature of a backyard raku kiln or other hot object that you can access from your phone with a web browser.
 
+![A sample of the display](media/sample.png)
+
 ## Pre-Requisites
 * An ESP8266 based board
 * An Adafruit MAX31856 Breakout
