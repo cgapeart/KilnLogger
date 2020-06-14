@@ -1,13 +1,18 @@
 
 #include "Adafruit_MAX31856.h"
 #include <memory>
+#include <TZ.h>
 //-----------------------------------------
 //LOCAL SETTINGS - update in this block for your needs
 
-#define STASSID "Wifi SSID"
-#define STAPSK  "WiFi Password"
+#define STASSID "WIFI SSID"
+#define STAPSK  "WIFI PASSWD"
 #define STANAME "KilnLogger-1"
-#define TIME_ZONE "MDT-6"
+
+//See https://github.com/esp8266/Arduino/blob/master/cores/esp8266/TZ.h 
+//for available time zone constants
+#define TIME_ZONE TZ_America_Edmonton 
+ 
 #define NTP_SERVER "0.ca.pool.ntp.org"
 #define THERMOCOUPLE_TYPE MAX31856_TCTYPE_J
 
@@ -20,17 +25,19 @@ const uint8_t xSCK = D0;
 const uint8_t xFLT = D5;
 const uint8_t xDRD = D6;
 
+//1800 samples at 10 seconds apart is 5 hours.
 //How many samples to keep and graph
-#define BUF_LEN 300
+#define BUF_LEN 1800
 //How often to sample the temperatures
 #define SAMPLE_PERIOD 10000
-//How much heap to set aside to build the .js or .json file to send
-//Must be big enough to hold all the data once converted based on BUF_LEN
-#define RESP_BUFFER_LEN 20000
+
 
 
 //END LOCAL SETTINGS
 //-----------------------------------------
+
+#define RESP_BUFFER_LEN 5000
+#define RESP_BUFFER_HIGH_WATER 4500
 
 
 const char *ssid = STASSID;
@@ -50,8 +57,7 @@ const char *mdnsName = STANAME;
 struct sample_t
 {
   time_t time;
-  float outsideTemp;
-  float insideTemp;
+  float temp;
 };
 volatile int current = 0;
 sample_t buffer[BUF_LEN] = {0};
@@ -76,13 +82,13 @@ static const char PROGMEM rootPage[] = "<html>\n"
                                        "<H1>" STANAME "</h1>\n"
                                        "<p>Uptime: %02d:%02d:%02d</p>\n"
                                        "<p>Date and time: %04d-%02d-%02d %02d:%02d:%02d</p>\n"
-                                       "<p>Outside Temp:%f degrees C</p>\n"
-                                       "<p>Measured Temp:%f degrees C</p>\n"
+                                       "<p>Outside Temp:%6.2f &deg; C</p>\n"
+                                       "<p>Max Temperature: %6.2f &deg; C <a href=\"/resetMax\">reset</a>\n"
                                        "<div class=\"ct-chart ct-octave\"></div>\n"
                                        "<script src=\"/chartist.min.js\"></script>\n"
                                        "<script src=\"/moment.min.js\"></script>\n"
                                        "<script src=\"/axistitle.min.js\"></script>\n"
-                                       "<script src=\"/legend.js\"></script>\n"
+                                       //"<script src=\"/legend.js\"></script>\n"
                                        "<script src=\"/data.js\"/></script>\n"
                                        "<script>\n"
                                        "new Chartist.Line('.ct-chart', data \n"
@@ -102,6 +108,7 @@ static const char PROGMEM rootPage[] = "<html>\n"
                                        "     } \n"
                                        "   , \n"
                                        "      chartPadding:{ top: 40, right:0, bottom:30, left: 20}, \n"
+                                       "      showPoint: false,\n"
                                        "      plugins: [ \n"
                                        "        Chartist.plugins.ctAxisTitle({\n"
                                        "          axisX : { \n"
@@ -118,17 +125,17 @@ static const char PROGMEM rootPage[] = "<html>\n"
                                        "                  }\n"
                                        "               }\n"
                                        "          )\n"
-                                       "         ,\n"
-                                       "          Chartist.plugins.legend()\n"
+                                       //"         ,\n"
+                                       //"          Chartist.plugins.legend()\n"
                                        "         ]\n"
                                        "      }\n"
                                        ");\n"
                                        "</script>\n"
-                                       "<a href=\"/data.json\">Raw data in .json format</a>\n"
+                                       "<a href=\"/data.json\" download=\"" STANAME ".json\">Raw data in .json format</a>\n"
                                        "</body>\n"
                                        "</html>\n";
 
-
+float maxTemp = 0;
 void handleRoot() {
 
 
@@ -140,13 +147,14 @@ void handleRoot() {
 
 
   
-  struct tm *localTime = pftime::localtime(&buffer[current].time);
+  struct tm *localTime = pftime::localtime(nullptr);
 
   snprintf(temp.get(), RESP_BUFFER_LEN, rootPage,
-           hr, min % 60, sec % 60,
+           hr, min % 60, sec % 60, 
            localTime->tm_year + 1900, localTime->tm_mon + 1, localTime->tm_mday,
            localTime->tm_hour, localTime->tm_min, localTime->tm_sec,
-           buffer[current].outsideTemp, buffer[current].insideTemp);
+           tempSensor.readCJTemperature(), maxTemp
+           );
 
   server.sendHeader("Cache-Control", "no-cache", true);
   server.send(200, "text/html", temp.get());
@@ -254,6 +262,7 @@ void setup(void) {
   server.on("/", handleRoot);
   server.on("/data.json", handleDataJson);
   server.on("/data.js", handleDataJs);
+  server.on("/resetMax", handleResetMax);
   server.onNotFound(handleNotFound);
   server.begin();
   Serial.println("HTTP server started");
@@ -265,12 +274,16 @@ void sampleData()
 {
   current = (current + 1) % BUF_LEN;
   time_t t = pftime::time(nullptr);
-  struct tm * now = pftime::gmtime(&t);
-  if (now->tm_year != 70)
+  buffer[current].time = t;
+  buffer[current].temp = tempSensor.readThermocoupleTemperature();
+  if(buffer[current].temp > maxTemp)
   {
-    buffer[current].time = t;
-    buffer[current].outsideTemp = tempSensor.readCJTemperature();
-    buffer[current].insideTemp = tempSensor.readThermocoupleTemperature();
+    maxTemp = buffer[current].temp;
+  }
+  Serial.print("Read into buffer position: ");
+  Serial.print(current);
+  Serial.print(": ");
+  Serial.println(buffer[current].temp);
 
     uint8_t fault = tempSensor.readFault();
 
@@ -285,19 +298,15 @@ void sampleData()
       if (fault & MAX31856_FAULT_OVUV)    Serial.println("Over/Under Voltage Fault");
       if (fault & MAX31856_FAULT_OPEN)    Serial.println("Thermocouple Open Fault");
     }
-
-
-    Serial.print(buffer[current].outsideTemp);
-    Serial.print(",");
-    Serial.println(buffer[current].insideTemp);
-  }
-  else
-  {
-    Serial.println("waiting for SNTP update before logging");
-  }
 }
 
-
+void handleResetMax()
+{
+  maxTemp = 0;
+  
+  server.sendHeader("Location", "/", true);
+  server.send(302, "text/plain", "");
+}
 void handleDataJson()
 {
   handleData(false);
@@ -316,54 +325,54 @@ void handleData(bool isJs)
 
 #define TEMPLEN 64
   char temp[TEMPLEN] = {0};
-  snprintf(temp, TEMPLEN, "%s{\n", isJs ? "var data=" : "");
-  responseBuffer += temp;
+  snprintf(temp, TEMPLEN, "%s{ series: [ [", isJs ? "var data=" : "");
+  responseBuffer = temp;
+
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.sendHeader("Cache-Control", "no-cache", true);
+  server.send(200, isJs ? "application/js" : "application/json", responseBuffer.c_str());
+  
+  responseBuffer.clear();
+
 
   int startFrom = current + 1;
 
 
-  //  snprintf(temp, TEMPLEN, "], series: [[");
-  snprintf(temp, TEMPLEN, "series: \n[{ name: 'Ambient Temp', data:[\n");
-  responseBuffer += temp;
+
+  int points = 0;
+  
   for (int i = 0 ; i < BUF_LEN; ++i)
   {
-    struct tm *tm = gmtime(&buffer[(i + startFrom) % BUF_LEN].time);
-    if (tm->tm_year != 70)
+    int pos = (i + startFrom) % BUF_LEN;
+    if(buffer[pos].time > 1000000)
     {
-      snprintf(temp, TEMPLEN, "\t{x: new Date(\"%04d-%02d-%02dT%02d:%02d:%02dZ\"), y:%f},\n",
-               tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
-               tm->tm_hour, tm->tm_min, tm->tm_sec, buffer[(i + startFrom) % BUF_LEN].outsideTemp);
-
+      ++points;
+      snprintf(temp, TEMPLEN, "\n{x: %lu000, y: %6.2f},",
+               buffer[pos].time, 
+               buffer[pos].temp);
       responseBuffer += temp;
+    }
+
+    if(responseBuffer.length() > RESP_BUFFER_HIGH_WATER)
+    {
+      server.sendContent(responseBuffer.c_str());
+      responseBuffer.clear();
     }
   }
 
-
-  snprintf(temp, TEMPLEN, "]},\n{ name: 'Kiln Temp', data: [\n");
+  snprintf(temp, TEMPLEN, "\n]\n]\n}%s", isJs ? ";" : "");
   responseBuffer += temp;
 
-  for (int i = 0 ; i < BUF_LEN; ++i)
-  {
-    struct tm *tm = gmtime(&buffer[(i + startFrom) % BUF_LEN].time);
+   server.sendContent(responseBuffer.c_str());
+   responseBuffer.clear();
 
-    if (tm->tm_year != 70)
-    {
-      snprintf(temp, TEMPLEN, "{x: new Date(\"%04d-%02d-%02dT%02d:%02d:%02dZ\"), y:%f},\n",
-               tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
-               tm->tm_hour, tm->tm_min, tm->tm_sec, buffer[(i + startFrom) % BUF_LEN].insideTemp);
-      responseBuffer += temp;
-    }
-  }
 
-  snprintf(temp, TEMPLEN, "]\n}\n]\n}%s", isJs ? ";" : "");
-  responseBuffer += temp;
+  Serial.print("startFrom: ");
+  Serial.print(startFrom);
 
-  Serial.print("Buffer used: ");
-  Serial.println(responseBuffer.length());
-
-  server.sendHeader("Cache-Control", "no-cache", true);
-  server.send(200, isJs ? "application/js" : "application/json", responseBuffer);
-
+  Serial.print(", points: ");
+  Serial.println(points);
+  
 }
 
 void loop(void)
