@@ -26,6 +26,10 @@ This is just a toy for creating a live graph of the temperature of a backyard ra
 * Pin mappings:  This sketch uses bitbanged SPI because I couldn't figure out the hardware yet.  See xCS, xSDI, xSDO, xSCK, xFLT, xDRD.
 * Solder the connections and keep them short.  Attach the thermocouple.
 * Make sure to use the ESP8266 sketch data upload plugin to copy the files from data folder into the SPIFFS filesystem on the ESP8266
+* The ESP has limited ram:  I have set it up to sample 5 hours worth of data, every 10 seconds (though the webpage will only refresh every 30 seconds)
+* BUF_LEN is the number of samples to store in a circular buffer
+* SAMPLE_PERIOD is the number of ms to wait between samples.
+* Sample timestamps stored in the buffer are recorded to the second.  Any sample rate smaller than 1000 will have duplicated time stamps, and the chart will not look right.
 
 ## Safety Warning
 * Released under [The MIT License](https://github.com/cgapeart/KilnLogger/blob/master/LICENSE)
