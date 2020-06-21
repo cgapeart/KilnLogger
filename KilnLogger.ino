@@ -1,12 +1,13 @@
-
+#include <TM1637Display.h>
+#include <ArduinoOTA.h>
 #include "Adafruit_MAX31856.h"
 #include <memory>
 #include <TZ.h>
 //-----------------------------------------
 //LOCAL SETTINGS - update in this block for your needs
 
-#define STASSID "WIFI SSID"
-#define STAPSK  "WIFI PASSWD"
+#define STASSID "WIFI-SSID"
+#define STAPSK  "WIFI-PASSWORD"
 #define STANAME "KilnLogger-1"
 
 //See https://github.com/esp8266/Arduino/blob/master/cores/esp8266/TZ.h 
@@ -24,6 +25,12 @@ const uint8_t xSDO = D1;
 const uint8_t xSCK = D0;
 const uint8_t xFLT = D5;
 const uint8_t xDRD = D6;
+
+//Update the 7seg LED display more often.
+#define UPDATE_LED7SEG 1000
+//Pin mappings for TMC1637 7 segment display
+const uint8_t xDIO = D7;
+const uint8_t xCLK = D6;
 
 //1800 samples at 10 seconds apart is 5 hours.
 //How many samples to keep and graph
@@ -53,7 +60,7 @@ const char *mdnsName = STANAME;
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
 
-
+TM1637Display  display7Seg(xCLK, xDIO);
 struct sample_t
 {
   time_t time;
@@ -215,6 +222,7 @@ void setup(void) {
   pinMode(xFLT, OUTPUT);
   Serial.begin(115200);
 
+  display7Seg.setBrightness(4, true);
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
 
@@ -231,6 +239,43 @@ void setup(void) {
   Serial.println(ssid);
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
+
+  //ArduinoOTA.setPort(8266);
+  //ArduinoOTA.setPassword("admin");
+  ArduinoOTA.setHostname(STANAME);
+  
+  ArduinoOTA.onStart([]() {
+    String type;
+    if (ArduinoOTA.getCommand() == U_FLASH) {
+      type = "sketch";
+    } else { // U_FS
+      type = "filesystem";
+    }
+
+    // NOTE: if updating FS this would be the place to unmount FS using FS.end()
+    Serial.println("Start updating " + type);
+  });
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\nEnd");
+  });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) {
+      Serial.println("Auth Failed");
+    } else if (error == OTA_BEGIN_ERROR) {
+      Serial.println("Begin Failed");
+    } else if (error == OTA_CONNECT_ERROR) {
+      Serial.println("Connect Failed");
+    } else if (error == OTA_RECEIVE_ERROR) {
+      Serial.println("Receive Failed");
+    } else if (error == OTA_END_ERROR) {
+      Serial.println("End Failed");
+    }
+  });
+  ArduinoOTA.begin();
 
 
   if (tempSensor.begin())
@@ -298,7 +343,66 @@ void sampleData()
       if (fault & MAX31856_FAULT_OVUV)    Serial.println("Over/Under Voltage Fault");
       if (fault & MAX31856_FAULT_OPEN)    Serial.println("Thermocouple Open Fault");
     }
+
+  display7Seg.showNumberDec((int)(buffer[current].temp));
 }
+
+
+void Update7Seg()
+{
+  float tempValue = tempSensor.readThermocoupleTemperature();
+  uint8_t fault = tempSensor.readFault();
+
+  if (fault)
+  {
+      if (fault & MAX31856_FAULT_CJRANGE) 
+      { 
+        Serial.println("Cold Junction Range Fault");
+        
+      }
+      
+      if (fault & MAX31856_FAULT_TCRANGE) 
+      {
+        Serial.println("Thermocouple Range Fault");
+      }
+      
+      if (fault & MAX31856_FAULT_CJHIGH)  
+      {
+        Serial.println("Cold Junction High Fault");
+      }
+      
+      if (fault & MAX31856_FAULT_CJLOW)  
+      {
+        Serial.println("Cold Junction Low Fault");
+      }
+      
+      if (fault & MAX31856_FAULT_TCHIGH)  
+      {
+        Serial.println("Thermocouple High Fault");
+      }
+      if (fault & MAX31856_FAULT_TCLOW) 
+      {
+        Serial.println("Thermocouple Low Fault");
+      }
+      
+      if (fault & MAX31856_FAULT_OVUV)    
+      {
+        Serial.println("Over/Under Voltage Fault");
+      }
+      
+      if (fault & MAX31856_FAULT_OPEN)  
+      {
+        Serial.println("Thermocouple Open Fault");
+      }
+
+      display7Seg.showNumberHexEx((uint16_t)(fault),0xff,true);
+  }
+  else
+  {
+    display7Seg.showNumberDec((int)(tempValue));
+  }
+}
+
 
 void handleResetMax()
 {
@@ -377,15 +481,23 @@ void handleData(bool isJs)
 
 void loop(void)
 {
-  static unsigned long last = 0;
+  static unsigned long lastSample = 0;
+  static unsigned long last7SegUpdate = 0;
   MDNS.update();
   server.handleClient();
 
   unsigned long now = millis();
-  if (now - last > SAMPLE_PERIOD)
+  if (now - lastSample > SAMPLE_PERIOD)
   {
-    last = now;
+    lastSample = now;
     sampleData();
   }
+
+  if (now - last7SegUpdate > UPDATE_LED7SEG)
+  {
+    last7SegUpdate = now;
+    Update7Seg();
+  }
+  ArduinoOTA.handle();
   ESP.wdtFeed();
 }
