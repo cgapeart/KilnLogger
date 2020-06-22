@@ -6,8 +6,8 @@
 //-----------------------------------------
 //LOCAL SETTINGS - update in this block for your needs
 
-#define STASSID "WIFI-SSID"
-#define STAPSK  "WIFI-PASSWORD"
+#define STASSID "WIFI SSID"
+#define STAPSK  "WIFI PASSWD"
 #define STANAME "KilnLogger-1"
 
 //See https://github.com/esp8266/Arduino/blob/master/cores/esp8266/TZ.h 
@@ -17,14 +17,28 @@
 #define NTP_SERVER "0.ca.pool.ntp.org"
 #define THERMOCOUPLE_TYPE MAX31856_TCTYPE_J
 
+#define LED_BUILTIN 2
+
+static const uint8_t D0   = 16;
+static const uint8_t D1   = 5;
+static const uint8_t D2   = 4;
+static const uint8_t D3   = 0;
+static const uint8_t D4   = 2;
+static const uint8_t D5   = 14;
+static const uint8_t D6   = 12;
+static const uint8_t D7   = 13;
+static const uint8_t D8   = 15;
+static const uint8_t RX   = 3;
+static const uint8_t TX   = 1;
+
 
 //Pin mappings max31865 breakout pin = ESP8266 pin
-const uint8_t xCS = D3;
-const uint8_t xSDI = D2;
-const uint8_t xSDO = D1;
-const uint8_t xSCK = D0;
-const uint8_t xFLT = D5;
-const uint8_t xDRD = D6;
+const uint8_t xCS = D4;
+const uint8_t xSDI = D3;
+const uint8_t xSDO = D2;
+const uint8_t xSCK = D1;
+//const uint8_t xFLT = D5;
+//const uint8_t xDRD = D6;
 
 //Update the 7seg LED display more often.
 #define UPDATE_LED7SEG 1000
@@ -218,8 +232,8 @@ bool handleFileRead(String path)
 
 
 void setup(void) {
-  pinMode(xDRD, OUTPUT);
-  pinMode(xFLT, OUTPUT);
+  //pinMode(xDRD, OUTPUT);
+  //pinMode(xFLT, OUTPUT);
   Serial.begin(115200);
 
   display7Seg.setBrightness(4, true);
