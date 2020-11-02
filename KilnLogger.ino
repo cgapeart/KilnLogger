@@ -6,16 +6,19 @@
 //-----------------------------------------
 //LOCAL SETTINGS - update in this block for your needs
 
-#define STASSID "WIFI-SSID"
-#define STAPSK  "WIFI-PASSWORD"
+#define STASSID "SSID"
+#define STAPSK  "PSK"
 #define STANAME "KilnLogger-1"
+
+#define USE_CELCIUS 0
+
 
 //See https://github.com/esp8266/Arduino/blob/master/cores/esp8266/TZ.h 
 //for available time zone constants
 #define TIME_ZONE TZ_America_Edmonton 
  
 #define NTP_SERVER "0.ca.pool.ntp.org"
-#define THERMOCOUPLE_TYPE MAX31856_TCTYPE_J
+#define THERMOCOUPLE_TYPE MAX31856_TCTYPE_K
 
 
 //Pin mappings max31865 breakout pin = ESP8266 pin
@@ -34,9 +37,9 @@ const uint8_t xCLK = D6;
 
 //1800 samples at 10 seconds apart is 5 hours.
 //How many samples to keep and graph
-#define BUF_LEN 1800
+#define BUF_LEN 3600
 //How often to sample the temperatures
-#define SAMPLE_PERIOD 10000
+#define SAMPLE_PERIOD 2000
 
 
 
@@ -46,6 +49,14 @@ const uint8_t xCLK = D6;
 #define RESP_BUFFER_LEN 5000
 #define RESP_BUFFER_HIGH_WATER 4500
 
+
+#if(USE_CELCIUS > 0)
+#define UNIT "C"
+#define TEMP(x) (x)
+#else
+#define UNIT "F"
+#define TEMP(x) (x*9/5+32)
+#endif
 
 const char *ssid = STASSID;
 const char *password = STAPSK;
@@ -89,8 +100,8 @@ static const char PROGMEM rootPage[] = "<html>\n"
                                        "<H1>" STANAME "</h1>\n"
                                        "<p>Uptime: %02d:%02d:%02d</p>\n"
                                        "<p>Date and time: %04d-%02d-%02d %02d:%02d:%02d</p>\n"
-                                       "<p>Outside Temp:%6.2f &deg; C</p>\n"
-                                       "<p>Max Temperature: %6.2f &deg; C <a href=\"/resetMax\">reset</a>\n"
+                                       "<p>Outside Temp:%6.2f &deg;" UNIT "</p>\n"
+                                       "<p>Max Temperature: %6.2f &deg; " UNIT " <a href=\"/resetMax\">reset</a>\n"
                                        "<div class=\"ct-chart ct-octave\"></div>\n"
                                        "<script src=\"/chartist.min.js\"></script>\n"
                                        "<script src=\"/moment.min.js\"></script>\n"
@@ -125,7 +136,7 @@ static const char PROGMEM rootPage[] = "<html>\n"
                                        "                     textAnchor: \"middle\"\n"
                                        "                   },\n"
                                        "          axisY : {\n"
-                                       "                     axisTitle:\"Temp (deg. C)\", \n"
+                                       "                     axisTitle:\"Temp (deg. " UNIT ")\", \n"
                                        "                     axisClass: \"ct-axis-title\",\n"
                                        "                     offset :{ x:0, y:0},\n"
                                        "                     flipTitle: false\n"
@@ -160,7 +171,7 @@ void handleRoot() {
            hr, min % 60, sec % 60, 
            localTime->tm_year + 1900, localTime->tm_mon + 1, localTime->tm_mday,
            localTime->tm_hour, localTime->tm_min, localTime->tm_sec,
-           tempSensor.readCJTemperature(), maxTemp
+           TEMP(tempSensor.readCJTemperature()), maxTemp
            );
 
   server.sendHeader("Cache-Control", "no-cache", true);
@@ -320,7 +331,7 @@ void sampleData()
   current = (current + 1) % BUF_LEN;
   time_t t = pftime::time(nullptr);
   buffer[current].time = t;
-  buffer[current].temp = tempSensor.readThermocoupleTemperature();
+  buffer[current].temp = TEMP(tempSensor.readThermocoupleTemperature());
   if(buffer[current].temp > maxTemp)
   {
     maxTemp = buffer[current].temp;
@@ -350,7 +361,7 @@ void sampleData()
 
 void Update7Seg()
 {
-  float tempValue = tempSensor.readThermocoupleTemperature();
+  float tempValue = TEMP(tempSensor.readThermocoupleTemperature());
   uint8_t fault = tempSensor.readFault();
 
   if (fault)
