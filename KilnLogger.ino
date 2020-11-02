@@ -35,13 +35,14 @@ const uint8_t xDRD = D6;
 const uint8_t xDIO = D7;
 const uint8_t xCLK = D6;
 
-//1800 samples at 10 seconds apart is 5 hours.
+//3600 samples at 2 seconds apart is 2 hours.
 //How many samples to keep and graph
 #define BUF_LEN 3600
-//How often to sample the temperatures
+//How often to sample the temperatures in milliseconds
 #define SAMPLE_PERIOD 2000
 
-
+//In whatever the chosen units are, add this to the temperature to offset the result.
+#define CALIBRATION_OFFSET 0
 
 //END LOCAL SETTINGS
 //-----------------------------------------
@@ -52,10 +53,10 @@ const uint8_t xCLK = D6;
 
 #if(USE_CELCIUS > 0)
 #define UNIT "C"
-#define TEMP(x) (x)
+#define TEMP(x) (x + CALIBRATION_OFFSET)
 #else
 #define UNIT "F"
-#define TEMP(x) (x*9/5+32)
+#define TEMP(x) ((x*9.0/5.0)+32.0 + CALIBRATION_OFFSET)
 #endif
 
 const char *ssid = STASSID;
@@ -237,17 +238,25 @@ void setup(void) {
   pinMode(xFLT, OUTPUT);
   Serial.begin(115200);
 
-  display7Seg.setBrightness(4, true);
+  display7Seg.setBrightness(7, true);
+  display7Seg.clear();
+  display7Seg.showNumberDec(0,true);
+  
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
-
+  display7Seg.showNumberDec(1,true);
+  
   SPIFFS.begin();
-
+  display7Seg.showNumberDec(2,true);
+  
   // Wait for connection
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
+  
   }
+  display7Seg.showNumberDec(3,true);
+  
 
   Serial.println("");
   Serial.print("Connected to ");
@@ -258,6 +267,7 @@ void setup(void) {
   //ArduinoOTA.setPort(8266);
   //ArduinoOTA.setPassword("admin");
   ArduinoOTA.setHostname(STANAME);
+  display7Seg.showNumberDec(4,true);
   
   ArduinoOTA.onStart([]() {
     String type;
@@ -291,12 +301,15 @@ void setup(void) {
     }
   });
   ArduinoOTA.begin();
+  display7Seg.showNumberDec(5,true);
 
 
   if (tempSensor.begin())
   {
     Serial.println("temp sensor started");
     tempSensor.setThermocoupleType(THERMOCOUPLE_TYPE);
+    display7Seg.showNumberDec(6,true);
+
     if (tempSensor.getThermocoupleType() != THERMOCOUPLE_TYPE)
     {
       Serial.println("SPI connection to MAX31856 is not working.  No point continuing.");
@@ -304,6 +317,8 @@ void setup(void) {
     }
 
     tempSensor.setNoiseFilter(MAX31856_NOISE_FILTER_60HZ);
+    display7Seg.showNumberDec(7,true);
+
     sampleData();
 
   }
@@ -332,15 +347,24 @@ void setup(void) {
 
 void sampleData()
 {
-  int last = current;
+  //average the delta temp over the last 5 samples.
+  float avgDeltaTemp = 0; 
   current = (current + 1) % BUF_LEN;
   time_t t = pftime::time(nullptr);
   buffer[current].time = t;
   buffer[current].temp = TEMP(tempSensor.readThermocoupleTemperature());
+
+  for(int i = 1; i < 5; ++i)
+  {
+    avgDeltaTemp += buffer[(current - i + 1)].temp - buffer[(current - i)].temp;
+  }
+
+  avgDeltaTemp = avgDeltaTemp / 5.0;
+  
   // Delta is the difference expressed as a rate.  The sample period is in ms, 
   // and the desired output is in degrees per minute:
   // delta (deg/samplerate(ms)) * 1000 ms/s *60 s/min = deg/min
-  deltaTemp = (buffer[current].temp - buffer[last].temp)/((float)SAMPLE_PERIOD) * 60000.0 ;
+  deltaTemp = avgDeltaTemp/((float)SAMPLE_PERIOD) * 60000.0 ;
   
   if(buffer[current].temp > maxTemp)
   {
