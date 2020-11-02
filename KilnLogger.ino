@@ -87,7 +87,6 @@ Adafruit_MAX31856 tempSensor(xCS, xSDI, xSDO, xSCK);
 
 static const char PROGMEM rootPage[] = "<html>\n"
                                        "<head>\n"
-                                       "<meta http-equiv=\"refresh\" content=\"30\">\n"
                                        "<title>Internet Of Kilns - " STANAME "</title>\n"
                                        "<link rel=\"stylesheet\" href=\"/chartist.min.css\">\n"
                                        "<link rel=\"stylesheet\" href=\"/legend.css\">\n"
@@ -101,6 +100,8 @@ static const char PROGMEM rootPage[] = "<html>\n"
                                        "<p>Uptime: %02d:%02d:%02d</p>\n"
                                        "<p>Date and time: %04d-%02d-%02d %02d:%02d:%02d</p>\n"
                                        "<p>Outside Temp:%6.2f &deg;" UNIT "</p>\n"
+                                       "<p>Current Temp:%6.2f &deg;" UNIT "</p>\n"
+                                       "<p>Rate of change: %6.2f &deg;" UNIT "/minute</p>\n"
                                        "<p>Max Temperature: %6.2f &deg; " UNIT " <a href=\"/resetMax\">reset</a>\n"
                                        "<div class=\"ct-chart ct-octave\"></div>\n"
                                        "<script src=\"/chartist.min.js\"></script>\n"
@@ -154,26 +155,29 @@ static const char PROGMEM rootPage[] = "<html>\n"
                                        "</html>\n";
 
 float maxTemp = 0;
-void handleRoot() {
-
+float deltaTemp = 0;
+void handleRoot() 
+{
 
   int sec = millis() / 1000;
   int min = sec / 60;
   int hr = min / 60;
+
+  
+  
 
   std::unique_ptr<char[]> temp(new char[RESP_BUFFER_LEN]);
 
 
   
   struct tm *localTime = pftime::localtime(nullptr);
-
-  snprintf(temp.get(), RESP_BUFFER_LEN, rootPage,
+    snprintf(temp.get(), RESP_BUFFER_LEN, rootPage,
            hr, min % 60, sec % 60, 
            localTime->tm_year + 1900, localTime->tm_mon + 1, localTime->tm_mday,
            localTime->tm_hour, localTime->tm_min, localTime->tm_sec,
-           TEMP(tempSensor.readCJTemperature()), maxTemp
+           TEMP(tempSensor.readCJTemperature()), TEMP(tempSensor.readThermocoupleTemperature()), deltaTemp, maxTemp
            );
-
+  server.sendHeader("Refresh", "30;url=/");
   server.sendHeader("Cache-Control", "no-cache", true);
   server.send(200, "text/html", temp.get());
 
@@ -328,10 +332,16 @@ void setup(void) {
 
 void sampleData()
 {
+  int last = current;
   current = (current + 1) % BUF_LEN;
   time_t t = pftime::time(nullptr);
   buffer[current].time = t;
   buffer[current].temp = TEMP(tempSensor.readThermocoupleTemperature());
+  // Delta is the difference expressed as a rate.  The sample period is in ms, 
+  // and the desired output is in degrees per minute:
+  // delta (deg/samplerate(ms)) * 1000 ms/s *60 s/min = deg/min
+  deltaTemp = (buffer[current].temp - buffer[last].temp)/((float)SAMPLE_PERIOD) * 60000.0 ;
+  
   if(buffer[current].temp > maxTemp)
   {
     maxTemp = buffer[current].temp;
